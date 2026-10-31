@@ -3,6 +3,15 @@
 // Example:
 [
 	{
+	"label": "run benchmark_input.ex", "command": "mix run lib/benchmark_input.ex"
+},
+	{
+	"label": "run nhf1.ex", "command": "mix run lib/nhf1.ex"
+},
+	{
+	"label": "run khf3_copy.ex", "command": "mix run lib/khf3_copy.ex"
+},
+	{
 	"label": "run khf3.ex", "command": "mix run lib/khf3.ex"
 },
 	{

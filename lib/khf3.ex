@@ -82,10 +82,15 @@ defmodule Khf3 do
     end
   end
 
-  @spec hova(allapot :: allapot(), elem :: elem()) :: l :: [lehelyezes()]
+  @spec hova2(
+          n :: meret(),
+          m :: meret(),
+          lehelyezesek :: {[MapSet.t({sorindex(), oszlopindex()})]},
+          elem :: elem()
+        ) :: l :: [lehelyezes()]
   # l az allapot megoldó-állapotban az elem összes szabályos
   # elhelyezését felsoroló lista; a lista sorrendje tetszőleges.
-  def hova2(n, m, lehelyezesek, elem) do
+  defp hova2(n, m, lehelyezesek, elem) do
     {_elemek, [mostani_helyek | _]} = lehelyezesek
     magassag = length(elem)
 
@@ -137,45 +142,10 @@ defmodule Khf3 do
 
   ### Régi feladat innen kezdődik ###
 
-  @spec utkozesek(n :: meret(), m :: meret(), lehelyez :: [lehelyezes()]) :: ut :: [utkozes()]
-  # Az n sorból és m oszlopból álló csutkára az elemeket a lehelyez lista szerint helyezve pontosan
-  # az ut elempárok ütköznek egymással, lexikografikusan növekvő sorrendben felsorolva.
-  def utkozesek(n, m, lehelyez) do
-    # elemeket lecserélni csak arra, hogy melyik helyeket foglalják el + index, hogy melyik elem
-    elemek = Enum.map(lehelyez, fn e -> elem_helyek(n, m, e) end) |> Enum.with_index()
-
-    Enum.reverse(megold(elemek, []))
-  end
-
-  @spec megold(elemek :: [elem_listakent()], [utkozes()]) :: [utkozes()]
-  # Létrehozza sorrendhelyesen a párokat, és megnézi a lerakásnál van-e átfedés
-  defp megold(_elemek = [{head_piece, head_index} | t], accumulator) do
-    # a h-t hasonlítjuk össze a maradék elemekkel
-    # ide kerülnek azok a hátralévő elemek közül (párba rendezve), amikkel van metszete
-    head_intersect_list =
-      Enum.reduce(t, [], fn {piece, piece_index}, acc ->
-        intersect = MapSet.intersection(head_piece, piece)
-
-        if MapSet.size(intersect) != 0 do
-          # ha van átfedés, belerakom a listába
-          [{head_index, piece_index} | acc]
-        else
-          acc
-        end
-      end)
-
-    # tovább hívom a tailre
-    # balról fűzés, mert a fenti fordított sorrendben hívja, és majd megfordítom
-    megold(t, head_intersect_list ++ accumulator)
-  end
-
-  # ha vége, csak visszaadom
-  defp megold([], accumulator), do: accumulator
-
   # elemet, mint string_list kéri
   # megmondja, melyik koordinátán van a ref
   # {ref_i, ref_j}
-  def elem_ref_hely(elem_list) do
+  defp elem_ref_hely(elem_list) do
     list = elem_list
 
     # megpróbálom pipeolással
@@ -207,7 +177,7 @@ defmodule Khf3 do
   # egy lehelyezést átalakít egy listává, amiben fel van sorolva az összes mező amit letakar (elem_listakent() típus)
   # n-t nem használja, de rosszul érezném magamat, ha nem írnám bele
   # lehet majd kell egy gömb? alakú játékhoz (tudom hogy nem tileable)
-  def elem_helyek(_n, m, elem) do
+  defp elem_helyek(_n, m, elem) do
     {list, eltol_i, eltol_j, forgat} = elem
 
     # megpróbálom pipeolással
