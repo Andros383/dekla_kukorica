@@ -208,9 +208,7 @@ defmodule BenchmarkInput do
     end
   end
 
-  def benchmark(n, m, opts \\ []) do
-    keszlet = BenchmarkInput.generate(n, m, opts)
-
+  def benchmark(n, m, keszlet) do
     Benchee.run(
       %{
         "Nhf1.megold #{n}x#{m}" => fn ->
@@ -222,9 +220,7 @@ defmodule BenchmarkInput do
     )
   end
 
-  def benchmark2(n, m, opts \\ []) do
-    keszlet = BenchmarkInput.generate(n, m, opts)
-
+  def benchmark2(n, m, keszlet) do
     {time, result} =
       :timer.tc(fn ->
         Nhf1.megold(n, m, keszlet)
@@ -235,9 +231,7 @@ defmodule BenchmarkInput do
     result
   end
 
-  def benchmarkMilan(n, m, opts \\ []) do
-    keszlet = BenchmarkInput.generate(n, m, opts)
-
+  def benchmarkMilan(n, m, keszlet) do
     Benchee.run(
       %{
         "Milan.megold #{n}x#{m}" => fn ->
@@ -249,9 +243,7 @@ defmodule BenchmarkInput do
     )
   end
 
-  def benchmark2Milan(n, m, opts \\ []) do
-    keszlet = BenchmarkInput.generate(n, m, opts)
-
+  def benchmark2Milan(n, m, keszlet) do
     {time, result} =
       :timer.tc(fn ->
         Milan.megold(n, m, keszlet)
@@ -264,8 +256,13 @@ defmodule BenchmarkInput do
 end
 
 IO.inspect("asd")
-BenchmarkInput.benchmark2(4, 4)
-BenchmarkInput.benchmark2Milan(10, 10)
+
+meret = {10, 10}
+{n, m} = meret
+keszlet = BenchmarkInput.generate(n, m, include_singleton: false)
+IO.inspect(keszlet)
+BenchmarkInput.benchmark2(n, m, keszlet)
+BenchmarkInput.benchmark2Milan(n, m, keszlet)
 # (4, 4)->0.4s
 
 # BenchmarkInput.benchmark(15, 15)
@@ -283,3 +280,39 @@ BenchmarkInput.benchmark2Milan(10, 10)
 #
 # # Legfeljebb 15 kukoricaszemes elemek.
 # keszlet = BenchmarkInput.generate(20, 20, max_piece_size: 15)
+
+@moduledoc """
+	Akkor ide írom, hogy majd meg tudjam csinálni
+	Gondolkoztam a bites reprezentáción, nem tetszett
+	Milántól volt az ötlet, hogy a helyeket nem kell tupleként tárolni
+	Precompute onnan jött, hogy nincs tárhely megkötés
+	Mindenképp az elemek domainjeit akarom szűkíteni, mert azokat tárolom el amúgy is
+	Lépés közben nem akartam azokat egyből lerakni, amiket csak egy féle képp lehetett volna, mert mikor kiírtam a lehetőségeket, kevés ilyet láttam (inkább 2-esek)
+	Nagyon büszke vagyok arra, hogy az első elemnek az oszlopa mindegy
+	Az, hogy a legkevesebb helyre lerakhatót válasszam onnan jött, hogy így a nagy elemeket gyorsan lerakom, és könnyen jönnek létre olyan kis lyukak, amikkel már van elem, ami nem fér le.
+	Mert először a nagy, (főleg magas) elemeket próbálja lerakni
+
+	Volt ötlet külön tesztelni az 1x1 lyukakat, mert azt csak az 1x1 elem tudja lefedni, ha van ilyen
+	Teszt alapján ez ritkán fordult elő
+
+	Benchmarkolás fura volt, Milánéhoz képest 10x10-es táblán nagyon változó, hogy most kié a gyorsabb.
+	7 ms vs 3600 ms és fordítva, teszteset függő, nem jöttünk rá miért.
+	Vannak olyan esetek is, ami egyikünknek se fut le időben.
+
+	Azért van főleg akkora nagy függvény a minimum kiválasztására, mert így a még helyes lerakások egyetlen bejárásával
+		korrigálom, hogy melyek helyesek még
+		szedem ki a legrövidebbet
+		dobom vissza az egészet, ha van elem, amit már nem lehet lerakni
+	Ezért lett a függvénynek átadva, hogy melyiket és hova rakja le.
+	Az egyszer futó kódokat nem optimalizáltam, pl az egész elem_minden_lehelyezese függvény, vagy a megold() eleje
+	Így azokban vannak furcsaságok, pl a legkevesebb helyre lerakható első elemnél
+		Asszem az ID mapon megyek át, amikor elég lenne a lehelyezésen
+		Kihasználom, hogy mivel tiszta a board, mindegyiket magassága szerint engedett * szélességszer lehet lerakni, de lehetne csak a magasság alapján venni
+			Azaz nincs olyan, hogy valami részt többször lehet lerakni, de az első oszlopos tömörítés után mégse.
+	Annyira jó, hogy nem livebookban írtam, de még így is alig ment az LSP
+
+	GPT a benchmark közben még mondott optimalizálásokat, de utána az egész kódot újraírtam, és ezek eltűntek. Elfelejtettem megkérni, hogy ne.
+
+	Azért adtam le ötször ugyan azt, mert úgy hallottam, hogy Zápor Ádám kódja 0.94 alatt fut az utolsóra
+	Az enyém 0.98 körül futott, szóval van esély arra, hogy vak szerencsével 0.93 lesz
+"""

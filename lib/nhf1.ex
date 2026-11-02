@@ -4,153 +4,232 @@ defmodule Nhf1 do
   @author "Falucskai András <andras.falucskai@gmail.com>"
   @date   "2026-10-31"
 
+  A feladat megoldásához ChatGPT-t használtam a benchmarkolásra, valamint hogy melyik beépített függvényeket használjam.
+  (Tudtam mit akartam elérni, de nem tudtam van-e rá függvény / hogy lehetne szépen, feladatról nem kapott információt ezeknél a kérdéseknél.)
+  A modell által írt benchmarkoló fájl automatikusan generál és tesztel bemeneteket.
+  Annyiban segített, hogy a kreatív optimalizációmról észrevettem, hogy kevésbé fog működni, és össze tudtam hasonlítani barátom megoldásával a sebességet.
+  Ebből látszódott, hogy 10x10-es táblánál nagyon nagy a szórás: Egyes bemenetekre egyik / másikunk kódja akár 200x gyorsabb.
+  Érdekesebb, hogy egyes esetekre egyáltalán le se fut értelmes időn belül (30 mp), másokra pedig 10 ms alatt kész van, a két tesztelt megoldás akár ugyan azon a bemeneten.
 
-  MI dolgok:
-  find_value függvényt tanácsolta
-  Map.new/2
-
-
-  nagy esetekre lefuttatni
-  megcsinálni, hogy a hova tudja a magasságot
-  	precomputeolni az elem forgatásokat, kell neki a magasság
-  megcsinálni az ID-zést
-  1-es lyuk optim
-  bitmaskok
-
-  átírni a segédfüggvényeket defp-re
-  felkommentezni, lespecelni
+  De legalább minden teszteset 1 mp alatt kész.
   """
+
+  # a csutka sorainak vagy oszlopainak száma
+  @type meret() :: pos_integer()
+  # a tábla egész mérete
+  @type tabla_meret() :: {meret(), meret()}
+  # egy elem szöveges leírása
+  @type elem_stringkent() :: [String.t()]
+  # elemek darabszáma
+  @type db() :: pos_integer()
+
+  # a csutka egy sorának indexe
+  @type sorindex() :: non_neg_integer()
+  # a csutka egy oszlopának indexe
+  @type oszlopindex() :: non_neg_integer()
+  # false: nincs forgatás; true: 180 fokos forgatás
+  @type forgatas() :: boolean()
+  # egy elem lehelyezése
+  @type lehelyezes() :: {i :: sorindex(), j :: oszlopindex(), f :: forgatas()}
+
+  # elem egyedi azonosítója
+  @type elem_id() :: integer()
+  # egy hely a táblán
+  @type hely() :: {sorindex(), oszlopindex()}
+  # lehelyezés leírása referenciahellyel és forgatással
+  @type(lehelyezes_leiras() :: sorindex(), oszlopindex(), boolean())
+  # a megoldáshoz használt egy-egy állapot
+  @type allapot() ::
+          {
+            # tábla mérete
+            tabla_meret(),
+            # elem_id-hez hozzárendeli a még szabályos lehelyezéseit
+            %{elem_id() => [{lehelyezes_leiras(), MapSet.t(hely())}]},
+            # elem_id-hez hogy mennyi van még belőle (legalább 1)
+            %{elem_id() => db()},
+            # A tábla, foglalt helyei
+            MapSet.t(hely()),
+            # megoldás, minden elem_id-hez hogy milyen helyekre raktam le őket
+            %{elem_id() => [lehelyezes_leiras()]}
+          }
+
+  @spec megold(n :: meret(), m :: meret(), keszlet :: %{elem_stringkent() => db()}) ::
+          megoldas :: %{elem_stringkent() => [lehelyezes()]} | nil
+  # A n sorból és m oszlopból álló üres csutkán a keszlet elemek
+  # egy lehetséges helyes elhelyezése megoldas, vagy nil, ha nincs ilyen.
   def megold(n, m, string_keszlet) do
     meret = {n, m}
 
-    # akarok egy olyat, hogy {id -> elem_lerakások}, {id -> elem_stringek}
-
-    # TODO ChatGPT dupla map reduce a kettő helyett, ha sokkal gyorsabb
-    # mivel szintaktikai trükk, nem gondolom problémának, hogy MI-ztem
-    keszlet =
-      Map.new(string_keszlet, fn {k, v} ->
-        {elem_helyek(meret, k), v}
+    # id_to_string: visszaváltja az elem_id()-ket elem_stringkent()-re
+    # id_to_lehelyezes: minden elem_id()-hez hozzárendeli a még szabályos lehelyezéseit
+    # id_to_db: minden elem_id()-hez hozzárendeli, hogy még mennyi van a készletben
+    {id_to_string, id_to_lehelyezes, id_to_db, _} =
+      Enum.reduce(string_keszlet, {Map.new(), Map.new(), Map.new(), 0}, fn {elem_stringkent, db},
+                                                                           {id_to_string_acc,
+                                                                            id_to_lehelyezes_acc,
+                                                                            id_to_db_acc, id} ->
+        {Map.put(id_to_string_acc, id, elem_stringkent),
+         Map.put(id_to_lehelyezes_acc, id, elem_minden_lehelyezese(meret, elem_stringkent)),
+         Map.put(id_to_db_acc, id, db), id + 1}
       end)
 
-    id_lerakasok_map = Map.new()
-    # vissza lehessen írni alap reprezentációs mapra
-    elem_stringtomb_map =
-      Map.new(string_keszlet, fn {k, _v} ->
-        {elem_helyek(meret, k), k}
+    # állapot: méret, még érvényes lehelyezések, készlet, tábla, megoldás
+    allapot = {meret, id_to_lehelyezes, id_to_db, MapSet.new(), Map.new()}
+
+    # azt a részt rakom le először, ami a legkevesebb helyre lerakható
+    # az elsőnél ezt manuálisan számítom, valójában az lesz, ami a legmagasabb
+    {elso_id, _db, _hossz, elso_lerakasok} =
+      Enum.reduce(id_to_db, {-1, -1, -1, []}, fn {id, db},
+                                                 {id_accum, db_accum, hossz_accum,
+                                                  lerakasok_accum} ->
+        lerakasok = Map.fetch!(id_to_lehelyezes, id)
+
+        l = length(lerakasok)
+
+        if l < hossz_accum || hossz_accum == -1 do
+          {id, db, l, lerakasok}
+        else
+          {id_accum, db_accum, hossz_accum, lerakasok_accum}
+        end
       end)
 
-    meret = {n, m}
+    # az első elemet csak egy oszlopban érdemes megpróbálni lerakni
+    lerakasok_filtered =
+      Enum.filter(elso_lerakasok, fn {{_eltol_i, eltol_j, _}, _} ->
+        eltol_j == 0
+      end)
 
-    # állapot: méret, készlet, tábla, lehelyezések, {elem_ref_hellyel, lehelyezés} formátumban
-    allapot = {meret, keszlet, MapSet.new(), Map.new()}
-
-    # domainek mindenképpen azok, hogy egy elemet hova lehet lerakni, nem pedig hogy egy helyre milyen elemek kerülhetnek
-    # mert egy helyet másik lerakással is le lehet fedni
-    solution = lerak(allapot)
+    # a lerak függvénynek meg kell mondani melyik részt és milyen helyekre próbálja meg lerakni
+    # a megoldáshoz mindig azt a részt választom, amit a legkevesebb helyre lehet lerakni
+    solution = lerak(allapot, elso_id, lerakasok_filtered)
 
     if solution == nil do
       nil
     else
       Map.new(solution, fn {k, v} ->
-        {Map.fetch!(elem_stringtomb_map, k), v}
+        {Map.fetch!(id_to_string, k), v}
       end)
     end
   end
 
-  def lerak(allapot) do
-    {meret, keszlet, tabla, sol} = allapot
+  @spec lerak(
+          # a megoldóállapot
+          allapot :: allapot(),
+          # melyik elemet próbálja meg lerakni következőnek, ez a legkevesebb helyre lerakható elem
+          melyiket :: elem_id(),
+          # hova próbálja meg lerakni
+          hova_lehet :: [lehelyezes_leiras()]
+        ) ::
+          nil | %{elem_id() => [lehelyezes_leiras()]}
+  # megpróbálja az elemet az adott helyekre lerakni
+  # ha ezzel megoldáshoz jut, visszaadja a teljes megoldást: minden elem_id-hez egy listában, hogy hova kell lerakni
+  # ha nem lehet megoldani ennek az elemnek a lehelyezésével, akkor nil-t ad vissza
+  defp lerak(allapot, melyiket, hova_lehet) do
+    {meret, id_to_lerakasok, keszlet, tabla, sol} = allapot
 
-    # elm nem érdemes a készletet find_valueozni, mert a végén úgy is mindet le kell rakni
-    # meg lehet adni az elemek egy sorrendjét, csak ugye nem érdemes
-    # szóval a külső for felesleges
+    # itt a melyiket a legkevesebb helyre lerakható elem, az előzőből számítva
+    id = melyiket
+    db = Map.fetch!(keszlet, id)
+    lerakasok = hova_lehet
 
-    # az első elem, amiből nem 0 darab van
-    {elem, _db} = Enum.find(keszlet, fn {k, v} -> v > 0 end)
-    # itt már csak a valid lerakások vannak, készletben lehet 0 is, akkor nem ad lerakást rá
-    lerakasok = hova(allapot, elem)
+    # elem felhasználása a készletből
+    uj_keszlet =
+      if db == 1 do
+        Map.delete(keszlet, id)
+      else
+        Map.put(keszlet, id, db - 1)
+      end
 
-    # kiveszem az elemet
-    uj_keszlet = Map.update!(keszlet, elem, fn x -> x - 1 end)
+    # megkeresi az első lerakást, ami megoldáshoz vezet
+    # ha van, akkor az értéke az a lerakás
+    # ha nincs, akkor nil
+    #
+    # find_value az enumerable-on végigmenve keresi az első függvény visszatérési értéket, ami nem nil
 
-    # megtalálja az első értéket, és visszaadja a listát amire nem nil-t ad vissza
     Enum.find_value(lerakasok, nil, fn lerakas ->
-      lerakott_elem_helyek = elem_lerak(meret, elem, lerakas)
+      {lerakas_leiras, helyek} = lerakas
 
-      if MapSet.disjoint?(tabla, lerakott_elem_helyek) do
-        # sikeres lerakás, megyünk tovább
-        uj_tabla = MapSet.union(tabla, lerakott_elem_helyek)
-        uj_sol = Map.update(sol, elem, [lerakas], fn x -> [lerakas | x] end)
-        uj_allapot = {meret, uj_keszlet, uj_tabla, uj_sol}
+      # új tábla előállítása
+      uj_tabla = MapSet.union(tabla, helyek)
 
-        if Enum.all?(uj_keszlet, fn {_k, v} -> v == 0 end) do
+      # id_to_lerakasok tábla szűrése
+      # csak azokat hagyom meg benne, amik valid lehelyezések
+      # hamar kilép nil-el, ha van olyan elem, amit nem lehet lerakni
+      # kiszedi, melyik id-jű elem a legkevesebb helyre lerakható, hogy egyből kezdhesse ezzel a következő
+
+      result =
+        Enum.reduce_while(id_to_lerakasok, {%{}, {nil, -1, nil}}, fn {id_inner, lerakasok},
+                                                                     acc =
+                                                                       {acc_map,
+                                                                        {shortest_id,
+                                                                         shortest_length,
+                                                                         shortest_where}} ->
+          # ez a kódblokk egy-egy elem még lehetséges lerakásain megy át
+
+          # lehet condozni, nem fogom
+          if db == 1 && id == id_inner do
+            # ha csak 1 db volt, és az a most lerakott elem, akkor elfogyott
+            {:cont, acc}
+          else
+            # filterelem a lerakásokat, hogy melyik lehetséges még
+            # lementem a hosszát az egyes filterezéseknek, hogy a legrövidebbet megkaphassa a továbbhívás
+            {lerakas_filtered, filtered_length} =
+              Enum.reduce(lerakasok, {[], 0}, fn lerakas = {_lerakas_leiras, helyek},
+                                                 {acc_list, acc_len} ->
+                if MapSet.disjoint?(uj_tabla, helyek) do
+                  {[lerakas | acc_list], acc_len + 1}
+                else
+                  {acc_list, acc_len}
+                end
+              end)
+
+            # Ha nincs már valid lerakása, az egész accum nil-lesz
+            # ezzel jelezve, hogy lehetetlen megoldani a feladatot
+            # és hamarabb kilép
+            if(filtered_length == 0) do
+              {:halt, nil}
+            else
+              # legkevesebb helyre rakható kimentése
+              if filtered_length < shortest_length || shortest_length == -1 do
+                {:cont,
+                 {Map.put(acc_map, id_inner, lerakas_filtered),
+                  {id_inner, filtered_length, lerakas_filtered}}}
+              else
+                {:cont,
+                 {Map.put(acc_map, id_inner, lerakas_filtered),
+                  {shortest_id, shortest_length, shortest_where}}}
+              end
+            end
+          end
+        end)
+
+      # van olyan elem, amiből még van, de nem lehet lerakni
+      if result == nil do
+        nil
+      else
+        {uj_id_to_lerakasok, {shortest_id, _shortest_length, shortest_where}} = result
+        # a megoldásban az elem végére fűzöm a lerakását
+        uj_sol = Map.update(sol, id, [lerakas_leiras], fn x -> [lerakas_leiras | x] end)
+        uj_allapot = {meret, uj_id_to_lerakasok, uj_keszlet, uj_tabla, uj_sol}
+        # nincs több elem, azaz mindent jól leraktunk
+        if map_size(uj_keszlet) == 0 do
           uj_sol
         else
-          lerak(uj_allapot)
+          # következő elem lerakása
+          lerak(uj_allapot, shortest_id, shortest_where)
         end
-      else
-        nil
       end
     end)
   end
 
-  # hova lehet lerakni egy adott elemet egy állapotban
-  # Ezt lehet utána fogom szűrni, de most jó ez így
-  def hova(allapot, elem) do
-    {meret = {n, m}, keszlet, tabla, _lerakasok} = allapot
+  @spec elem_minden_lehelyezese(meret :: tabla_meret(), elem_stringkent :: elem_stringkent()) ::
+          [{lehelyezes_leiras(), MapSet.t(hely())}]
+  # A bemenetként megadott elemre visszaadja az összes szabályos lerakását az üres táblán
+  defp elem_minden_lehelyezese(meret, elem_stringkent) do
+    {n, m} = meret
+    list = elem_stringkent
 
-    {elem_lista, ref_i, _ref_j} = elem
-    # ha nincs több elem, akkor nem lehet lerakni
-    if Map.fetch!(keszlet, elem) == 0 do
-      []
-    else
-      # magassag = length(elem_lista)
-
-      # megnézem a referencia elem alatt / felett hány sor van
-      # így pl egy 5 magas táblára egy 5 magas elemet csak egy sorba próbálok meg lerakni
-      # felette = ref_i
-      # alatta = magassag - felette - 1
-
-      #       combinations1 =
-      #         for i <- felette..(n - alatta - 1),
-      #             j <- 0..(m - 1) do
-      #           {i, j, false}
-      #         end
-      #
-      #       combinations2 =
-      #         for i <- alatta..(n - felette - 1),
-      #             j <- 0..(m - 1) do
-      #           {i, j, true}
-      #         end
-      #
-
-      # combinations = combinations1 ++ combinations2
-      combinations =
-        for i <- 0..(n - 1),
-            j <- 0..(m - 1),
-            f <- [true, false] do
-          {i, j, f}
-        end
-
-      Enum.filter(combinations, fn {i, j, f} ->
-        mostani_helyek = elem_lerak(meret, elem, {i, j, f})
-
-        # ha az új helyek disjoint, akkor maradhat
-        lelog_e =
-          Enum.any?(mostani_helyek, fn {i, _j} ->
-            i < 0 || n <= i
-          end)
-
-        MapSet.disjoint?(mostani_helyek, tabla) && !lelog_e
-      end)
-    end
-  end
-
-  # itt most csak az elemet, mint listát kapja meg, megadja melyik mezők vannak letakarva
-  def elem_helyek(meret, elem) do
-    {_n, m} = meret
-    list = elem
-
-    # megpróbálom pipeolással
+    # 1. lépés: A stringtömb átalakítása egy MapSet-é, minden elem {i, j} formátumban
     list =
       list
       # a sorokat kifejező stringek helyett olyan lista van, amiben egy-egy elem {karakter, index} alakban van
@@ -174,64 +253,75 @@ defmodule Nhf1 do
     # karakter információ már nem kell, tudjuk hol a referencia szem
     list = list |> Enum.map(fn {_, i, j} -> {i, j} end)
 
-    list =
-      list
-      |> Enum.map(fn {i, j} -> {i, Integer.mod(j, m)} end)
-      |> MapSet.new()
+    # 2. lépés: minden lehetséges lerakásnál a MapSet legenerálása, és elrakása egy map-ba.
+    # Így egy-egy lehelyezéshez számítás nélkül el tudjuk tárolni pontosan milyen helyek tartoznak
 
-    {list, ref_i, ref_j}
-  end
+    magassag = length(elem_stringkent)
 
-  def elem_lerak(meret, elem_reffel, lehelyezes) do
-    {_n, m} = meret
-    {list, ref_i, ref_j} = elem_reffel
-    {eltol_i, eltol_j, forgat} = lehelyezes
+    # megnézem a referencia elem alatt / felett hány sor van
+    # így pl egy 5 magas táblára egy 5 magas elemet csak egy sorba próbálok meg lerakni
+    felette = ref_i
+    alatta = magassag - felette - 1
 
-    list =
-      if forgat do
-        list
-        |> Enum.map(fn {i, j} ->
-          # középpontos tükrözés: R + (P -> R) ilyen vektorosan, lerajzolom ha kell
-          diff_i = i - ref_i
-          diff_j = j - ref_j
-
-          # kibontva 2*ref_i - i
-          {ref_i - diff_i, ref_j - diff_j}
-        end)
-      else
-        # Ha nem forgatom, csak az eredeti lista
-        list
+    # nem forgatott változat
+    lehelyezesek_1 =
+      for i <- felette..(n - alatta - 1),
+          j <- 0..(m - 1) do
+        {i, j}
       end
 
-    list
-    # eltolás a megadott pozícióba, referencia korrigálás
-    |> Enum.map(fn {i, j} -> {i + eltol_i - ref_i, j + eltol_j - ref_j} end)
+    # forgatott változat
+    lehelyezesek_2 =
+      for i <- alatta..(n - felette - 1),
+          j <- 0..(m - 1) do
+        {i, j}
+      end
 
-    # tbh csak betippeltem a kettő közül melyik irány a körbefordulás
-    |> Enum.map(fn {i, j} -> {i, Integer.mod(j, m)} end)
+    list_1 =
+      for {eltol_i, eltol_j} <- lehelyezesek_1 do
+        elem_helyek =
+          list
+          # eltolás a megadott pozícióba, referencia korrigálás
+          |> Enum.map(fn {i, j} -> {i + eltol_i - ref_i, j + eltol_j - ref_j} end)
+          # tbh csak betippeltem a kettő közül melyik irány a körbefordulás
+          |> Enum.map(fn {i, j} -> {i, Integer.mod(j, m)} end)
+          # MapSet disjoint legyen gyorsabb, tuple helyett a helyeket csak számként tárolom
+          |> Enum.map(fn {i, j} -> m * i + j end)
+          |> MapSet.new()
 
-    # minden elem egyedi lesz, és majd intersectiont fogok nézni köztük, ezért mehet halmazba
-    |> MapSet.new()
+        {{eltol_i, eltol_j, false}, elem_helyek}
+      end
+
+    # 1x1-es elemet nem kell forgatni
+    # belerakom, mert lehet optimalizál valamit...
+    list_2 =
+      if length(list) == 1 do
+        []
+      else
+        for {eltol_i, eltol_j} <- lehelyezesek_2 do
+          elem_helyek =
+            list
+            # forgatás
+            |> Enum.map(fn {i, j} ->
+              # középpontos tükrözés: R + (P -> R) ilyen vektorosan, lerajzolom ha kell
+              diff_i = i - ref_i
+              diff_j = j - ref_j
+
+              # kibontva 2*ref_i - i
+              {ref_i - diff_i, ref_j - diff_j}
+            end)
+            # eltolás a megadott pozícióba, referencia korrigálás
+            |> Enum.map(fn {i, j} -> {i + eltol_i - ref_i, j + eltol_j - ref_j} end)
+            # tbh csak betippeltem a kettő közül melyik irány a körbefordulás
+            |> Enum.map(fn {i, j} -> {i, Integer.mod(j, m)} end)
+            # MapSet disjoint legyen gyorsabb, tuple helyett a helyeket csak számként tárolom
+            |> Enum.map(fn {i, j} -> m * i + j end)
+            |> MapSet.new()
+
+          {{eltol_i, eltol_j, true}, elem_helyek}
+        end
+      end
+
+    list_1 ++ list_2
   end
 end
-
-#
-# IO.inspect("### NHF1 ###")
-#
-# piece_a = ["XO", "O "]
-# piece_b = ["XO", "OO", "OO"]
-# keszlet = %{piece_a => 20, piece_b => 1}
-# sol = Nhf1.megold(3, 4, keszlet)
-#
-# IO.inspect(sol)
-# # %{["XO", "O "] => [{0, 1, false}, {2, 2, true}],
-# #  ["XO", "OO", "OO"] => [{0, 3, false}]}
-#
-# IO.inspect("### NHF1 ###")
-#
-# meret = {3, 4}
-
-# elem_reffel = Nhf1.elem_helyek(meret, piece_a)
-# IO.inspect(elem_reffel)
-# lerakott = Nhf1.elem_lerak(meret, elem_reffel, {1, 1, true})
-# IO.inspect(lerakott)
