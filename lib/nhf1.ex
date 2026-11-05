@@ -325,3 +325,8 @@ defmodule Nhf1 do
     list_1 ++ list_2
   end
 end
+
+piece_a = ["XO", "O "]
+piece_b = ["XO", "OO", "OO"]
+keszlet = %{piece_a => 2, piece_b => 1}
+Nhf1.megold(3, 4, keszlet)
